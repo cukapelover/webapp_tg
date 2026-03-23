@@ -25,36 +25,9 @@ function tgSend(payload) {
 }
 
 async function searchTracks(query) {
-  const params = new URLSearchParams({ q: query, limit: "10" });
-  const deezerUrl = `https://api.deezer.com/search?${params.toString()}`;
-
-  // WebView inside Telegram can block/alter access to 3rd party APIs.
-  // Try multiple JSON-capable proxies. If all fail, show the last error.
-  const proxyUrls = [
-    // allorigins
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(deezerUrl)}`,
-    // corsproxy.io
-    `https://corsproxy.io/?${encodeURIComponent(deezerUrl)}`,
-    // thingproxy (varies)
-    `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(deezerUrl)}`,
-  ];
-
-  const candidates = [deezerUrl, ...proxyUrls];
-  let lastErr = null;
-
-  for (const url of candidates) {
-    try {
-      const resp = await fetch(url, { method: "GET" });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      const items = Array.isArray(data.data) ? data.data : [];
-      return items.filter((x) => x && x.type === "track").slice(0, 10);
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-
-  throw new Error(`Load failed (all attempts): ${lastErr?.message || lastErr}`);
+  // Deprecated: We don't fetch Deezer directly from WebApp due to Telegram WebView network/CORS restrictions.
+  // Kept only to avoid breaking the rest of the file if you later re-enable direct fetch.
+  return [];
 }
 
 function renderTrackList(tracks) {
@@ -142,15 +115,9 @@ function setup() {
     const query = q.value.trim();
     if (!query) return;
 
-    setStatus("Ищу в Deezer...");
-    try {
-      const tracks = await searchTracks(query);
-      renderTrackList(tracks);
-      setStatus(`Готово: найдено ${tracks.length}.`);
-    } catch (err) {
-      console.error(err);
-      setStatus(`Ошибка поиска: ${err.message || err}`);
-    }
+    setStatus("Ищу... Открой чат с ботом: результаты придут туда.");
+    // Ask the bot to do the search (server-side), so we don't depend on WebView network access.
+    tgSend({ action: "search", query });
   });
 }
 
