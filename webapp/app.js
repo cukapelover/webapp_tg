@@ -108,6 +108,52 @@ async function fetchCommentsFromApi(trackId) {
   return null;
 }
 
+async function fetchLikeCounts(trackIds) {
+  const base = getApiBase();
+  if (!base || !trackIds.length) return {};
+  const url = `${base}/api/likes?ids=${trackIds.join(",")}&_ts=${Date.now()}`;
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const resp = await fetch(url, {
+        cache: "no-store",
+        headers: { "ngrok-skip-browser-warning": "1" },
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      return data.likes || {};
+    } catch (err) {
+      if (i === 1) throw err;
+      await new Promise((r) => setTimeout(r, 350));
+    }
+  }
+  return {};
+}
+
+function setLikeBadgeText(trackId, text) {
+  document.querySelectorAll(`[data-like-count-for="${trackId}"] .like-num`).forEach((el) => {
+    el.textContent = text;
+  });
+}
+
+async function refreshLikeBadges(trackIds) {
+  const uniq = [...new Set(trackIds.map(Number))].filter((n) => Number.isFinite(n) && n > 0);
+  if (!uniq.length) return;
+  const base = getApiBase();
+  if (!base) {
+    uniq.forEach((id) => setLikeBadgeText(id, "–"));
+    return;
+  }
+  try {
+    const likes = await fetchLikeCounts(uniq);
+    for (const id of uniq) {
+      const v = likes[String(id)];
+      setLikeBadgeText(id, v != null ? String(v) : "0");
+    }
+  } catch (_) {
+    uniq.forEach((id) => setLikeBadgeText(id, "?"));
+  }
+}
+
 function mergeCommentLists(serverList, localList) {
   const seen = new Set();
   const out = [];
@@ -277,16 +323,24 @@ function renderProfile() {
   }
 
   profile.innerHTML = "";
+  const profileTrackIds = [];
   for (const t of tracks) {
     const id = Number(t.id);
     if (!Number.isFinite(id) || id <= 0) continue;
+    profileTrackIds.push(id);
     const title = t.title || "Track";
     const artist = t.artist?.name || "Unknown";
     const album = t.album?.title || "";
     const card = document.createElement("div");
     card.className = "track";
     card.innerHTML = `
-      <div><b>${escapeHtml(artist)}</b> — ${escapeHtml(title)}</div>
+      <div class="track-head">
+        <div class="track-title-line"><b>${escapeHtml(artist)}</b> — ${escapeHtml(title)}</div>
+        <div class="like-count-pill" data-like-count-for="${id}" title="Лайков всего">
+          <span class="like-icon" aria-hidden="true">♥</span>
+          <span class="like-num">…</span>
+        </div>
+      </div>
       <div class="meta small">${escapeHtml(album)}</div>
       <div class="row">
         <button type="button" data-profile-action="play" data-id="${id}">Отправить в чат</button>
@@ -297,6 +351,8 @@ function renderProfile() {
     `;
     profile.appendChild(card);
   }
+
+  void refreshLikeBadges(profileTrackIds);
 
   profile.querySelectorAll("button[data-profile-action]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -325,6 +381,7 @@ function renderProfile() {
         setStatus("Лайк снят.");
         tgSend({ action: "like", trackId, liked: false });
         renderProfile();
+        void refreshLikeBadges([trackId]);
       }
     });
   });
@@ -409,9 +466,11 @@ function renderTrackList(tracks) {
     return;
   }
 
+  const shownTrackIds = [];
   for (const t of tracks) {
     const id = Number(t.id);
     if (!Number.isFinite(id) || id <= 0) continue;
+    shownTrackIds.push(id);
     const title = t.title || "Track";
     const artist = t.artist?.name || "Unknown";
     const album = t.album?.title || "";
@@ -420,7 +479,13 @@ function renderTrackList(tracks) {
     const card = document.createElement("div");
     card.className = "track";
     card.innerHTML = `
-      <div><b>${escapeHtml(artist)}</b> — ${escapeHtml(title)}</div>
+      <div class="track-head">
+        <div class="track-title-line"><b>${escapeHtml(artist)}</b> — ${escapeHtml(title)}</div>
+        <div class="like-count-pill" data-like-count-for="${id}" title="Лайков всего">
+          <span class="like-icon" aria-hidden="true">♥</span>
+          <span class="like-num">…</span>
+        </div>
+      </div>
       <div class="meta small">${escapeHtml(album)}</div>
       <div class="row">
         <button type="button" data-action="play" data-id="${id}">Отправить в чат</button>
@@ -482,6 +547,7 @@ function renderTrackList(tracks) {
             btn.textContent = "Убрать лайк";
           }
           renderProfile();
+          void refreshLikeBadges([trackId]);
           return;
         }
 
@@ -493,17 +559,19 @@ function renderTrackList(tracks) {
             return;
           }
           setStatus("Сохраняю комментарий...");
-        const apiBase = getApiBase();
-        const { userId, author } = getCurrentTgAuthor();
-        // Если API доступен, показываем комментарии глобально из БД.
-        // Локальное добавляем только как fallback, когда API недоступен.
-        if (!apiBase) appendLocalComment(trackId, userId, author, comment);
+          const apiBase = getApiBase();
+          const { userId, author } = getCurrentTgAuthor();
+          // Если API доступен, показываем комментарии глобально из БД.
+          // Локальное добавляем только как fallback, когда API недоступен.
+          if (!apiBase) appendLocalComment(trackId, userId, author, comment);
           tgSend({ action: "comment", trackId, comment });
           setStatus("Комментарий сохранён. Откройте «Комментарии».");
         }
       });
     });
   }
+
+  void refreshLikeBadges(shownTrackIds);
 }
 
 function setup() {
