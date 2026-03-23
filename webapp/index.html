@@ -57,6 +57,16 @@
       .row { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
       .small { font-size: 12px; opacity: 0.9; }
       textarea { width: 100%; min-height: 44px; resize: vertical; }
+      /* Комментарии: более мутное полупрозрачное поле, отличающееся от поиска/кнопок */
+      textarea[data-comment-for]{
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        color: #e8eefc;
+        padding: 10px;
+        border-radius: 10px;
+      }
       /* Modal for comments */
       #commentsModal {
         display: none;
@@ -112,7 +122,7 @@
         <h2 style="margin:0;">Музыка (Deezer)</h2>
       </div>
       <div class="row" style="margin-top:10px;">
-        <button type="button" id="tabSearch">Поиск</button>
+        <button type="button" id="tabSearch">Искать</button>
         <button type="button" id="tabProfile">Профиль (лайки)</button>
       </div>
       <form id="searchForm">
