@@ -9,7 +9,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from dataclasses import dataclass
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -245,8 +245,34 @@ def _comments_api_json_payload(track_id: int, limit: int = 100) -> Dict[str, Any
     return {"comments": comments}
 
 
-class CommentsAPIHandler(BaseHTTPRequestHandler):
-    """Tiny JSON API so the Mini App can show comments without posting to chat."""
+def _like_counts_for_tracks(track_ids: List[int]) -> Dict[int, int]:
+    """How many distinct users liked each track (global, from SQLite)."""
+    uniq: List[int] = []
+    seen: set[int] = set()
+    for tid in track_ids:
+        if tid in seen:
+            continue
+        seen.add(tid)
+        uniq.append(tid)
+    if not uniq:
+        return {}
+    out: Dict[int, int] = {tid: 0 for tid in uniq}
+    placeholders = ",".join("?" * len(uniq))
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            f"SELECT track_id, COUNT(*) FROM likes WHERE track_id IN ({placeholders}) GROUP BY track_id",
+            uniq,
+        ).fetchall()
+    for tid, cnt in rows:
+        out[int(tid)] = int(cnt)
+    return out
+
+
+class MiniAppAPIHandler(BaseHTTPRequestHandler):
+    """
+    Лёгкий HTTP-интерфейс к SQLite для Mini App (без API-ключей).
+    Должен быть доступен по публичному HTTPS (тот же VPS, что и бот).
+    """
 
     def log_message(self, format: str, *args: Any) -> None:
         logging.info("%s - %s", self.address_string(), format % args)
@@ -256,6 +282,15 @@ class CommentsAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
+    def _write_json(self, status: int, payload: Dict[str, Any]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self._send_cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self._send_cors()
@@ -263,32 +298,37 @@ class CommentsAPIHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if not parsed.path.startswith("/api/comments/"):
-            self.send_error(404)
+        path = parsed.path
+
+        if path == "/api/likes":
+            qs = parse_qs(parsed.query)
+            ids_raw = (qs.get("ids") or [""])[0]
+            parts = [p.strip() for p in ids_raw.split(",") if p.strip()]
+            track_ids: List[int] = []
+            for p in parts[:50]:
+                try:
+                    track_ids.append(int(p))
+                except ValueError:
+                    continue
+            counts = _like_counts_for_tracks(track_ids)
+            self._write_json(200, {"likes": {str(k): v for k, v in counts.items()}})
             return
-        tail = parsed.path[len("/api/comments/") :].strip("/")
-        if not tail:
-            self.send_error(404)
+
+        if path.startswith("/api/comments/"):
+            tail = path[len("/api/comments/") :].strip("/")
+            if not tail:
+                self.send_error(404)
+                return
+            try:
+                track_id = int(tail.split("/", 1)[0])
+            except ValueError:
+                self._write_json(400, {"error": "bad track id"})
+                return
+            payload = _comments_api_json_payload(track_id)
+            self._write_json(200, payload)
             return
-        try:
-            track_id = int(tail.split("/", 1)[0])
-        except ValueError:
-            err = json.dumps({"error": "bad track id"}).encode("utf-8")
-            self.send_response(400)
-            self._send_cors()
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(err)))
-            self.end_headers()
-            self.wfile.write(err)
-            return
-        payload = _comments_api_json_payload(track_id)
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self._send_cors()
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+
+        self.send_error(404)
 
 
 def _start_comments_api_server() -> None:
@@ -300,15 +340,15 @@ def _start_comments_api_server() -> None:
         logging.warning("Invalid COMMENTS_API_PORT=%r, skipping comments API server.", port_raw)
         return
     try:
-        server = HTTPServer((host, port), CommentsAPIHandler)
+        server = HTTPServer((host, port), MiniAppAPIHandler)
     except OSError as exc:
         logging.warning("Could not start comments API on %s:%s: %s", host, port, exc)
         return
     thread = threading.Thread(target=server.serve_forever, daemon=True, name="comments-api")
     thread.start()
     logging.info(
-        "Comments API for Mini App: http://%s:%s/api/comments/<trackId> — "
-        "пробросьте наружу (ngrok/cloudflared) и укажите URL в webapp/index.html → MUSIFY_API_BASE",
+        "Mini App data API: http://%s:%s — /api/comments/<trackId>, /api/likes?ids=1,2 "
+        "(публичный HTTPS на сервере бота; BOT_PUBLIC_API_URL или ?api= в WebApp)",
         host,
         port,
     )
