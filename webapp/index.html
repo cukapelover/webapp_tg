@@ -65,12 +65,17 @@
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <h2 style="margin:0;">Музыка (Deezer)</h2>
       </div>
+      <div class="row" style="margin-top:10px;">
+        <button type="button" id="tabSearch">Поиск</button>
+        <button type="button" id="tabProfile">Профиль (лайки)</button>
+      </div>
       <form id="searchForm">
         <input id="q" placeholder="Поиск: исполнитель или трек" maxlength="120" />
         <button type="submit">Поиск</button>
       </form>
       <div id="status" class="small" style="margin-top:10px;"></div>
       <div id="results"></div>
+      <div id="profile" style="display:none; margin-top: 14px;"></div>
     </div>
 
     <!-- Telegram WebApp SDK -->
