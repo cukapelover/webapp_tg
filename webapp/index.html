@@ -57,6 +57,52 @@
       .row { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
       .small { font-size: 12px; opacity: 0.9; }
       textarea { width: 100%; min-height: 44px; resize: vertical; }
+      /* Modal for comments */
+      #commentsModal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.65);
+      }
+      #commentsModal.open { display: flex; }
+      .modal-panel {
+        background: #121826;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 14px;
+        max-width: 420px;
+        width: 100%;
+        max-height: 70vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      }
+      .modal-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .modal-head h3 { margin: 0; font-size: 16px; }
+      .modal-body {
+        padding: 10px 14px 14px;
+        overflow-y: auto;
+        font-size: 14px;
+      }
+      .comment-row {
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .comment-row:last-child { border-bottom: none; }
+      .comment-author { font-weight: bold; opacity: 0.95; }
+      .comment-meta { font-size: 11px; opacity: 0.65; margin-top: 4px; }
+      .comment-text { margin-top: 6px; line-height: 1.35; }
     </style>
   </head>
   <body>
@@ -78,6 +124,23 @@
       <div id="profile" style="display:none; margin-top: 14px;"></div>
     </div>
 
+    <div id="commentsModal" aria-hidden="true">
+      <div class="modal-panel" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <div>
+            <h3 id="commentsModalTitle">Комментарии</h3>
+            <div class="small" id="commentsModalHint" style="margin-top:4px;"></div>
+          </div>
+          <button type="button" id="commentsModalClose">Закрыть</button>
+        </div>
+        <div class="modal-body" id="commentsModalBody"></div>
+      </div>
+    </div>
+
+    <!-- Необязательно: можно оставить пустым, если при запуске бота задать BOT_PUBLIC_API_URL — тогда ?api=... подставит бот. -->
+    <script>
+      window.MUSIFY_API_BASE = "";
+    </script>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="app.js"></script>
