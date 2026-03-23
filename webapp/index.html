@@ -56,7 +56,7 @@
       .meta { opacity: 0.9; margin-top: 4px; }
       .row { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
       .small { font-size: 12px; opacity: 0.9; }
-      textarea { width: 100%; min-height: 44px; resize: vertical; }
+      textarea { width: 100%; min-height: 44px; resize: vertical; box-sizing: border-box; max-width: 100%; }
       /* Комментарии: более мутное полупрозрачное поле, отличающееся от поиска/кнопок */
       textarea[data-comment-for]{
         background: rgba(255, 255, 255, 0.12);
@@ -66,6 +66,7 @@
         color: #e8eefc;
         padding: 10px;
         border-radius: 10px;
+        display: block;
       }
       /* Modal for comments */
       #commentsModal {
@@ -122,12 +123,12 @@
         <h2 style="margin:0;">Музыка (Deezer)</h2>
       </div>
       <div class="row" style="margin-top:10px;">
-        <button type="button" id="tabSearch">Искать</button>
+        <button type="button" id="tabSearch">Поиск</button>
         <button type="button" id="tabProfile">Профиль (лайки)</button>
       </div>
       <form id="searchForm">
         <input id="q" placeholder="Поиск: исполнитель или трек" maxlength="120" />
-        <button type="submit">Поиск</button>
+        <button type="submit">Искать</button>
       </form>
       <div id="status" class="small" style="margin-top:10px;"></div>
       <div id="results"></div>
