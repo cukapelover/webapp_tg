@@ -167,27 +167,26 @@ async function openCommentsModal(trackId, trackTitle) {
       }));
     } catch (_) {
       if (hintEl) {
-        hintEl.textContent =
-          "Не удалось загрузить комментарии с сервера. Показаны только локальные.";
+        hintEl.textContent = "Не удалось загрузить комментарии с сервера.";
       }
     }
   }
 
-  const localComments = getLocalCommentsForTrack(trackId).map((c) => ({
-    user_id: c.user_id,
-    author: c.author,
-    text: c.text,
-    created_at: c.created_at,
-  }));
+  const commentsToShow = base
+    ? serverComments
+    : getLocalCommentsForTrack(trackId).map((c) => ({
+        user_id: c.user_id,
+        author: c.author,
+        text: c.text,
+        created_at: c.created_at,
+      }));
 
-  const merged = mergeCommentLists(serverComments, localComments);
-
-  if (!merged.length) {
+  if (!commentsToShow.length) {
     bodyEl.innerHTML = `<div class="small">Пока нет комментариев.</div>`;
     return;
   }
 
-  bodyEl.innerHTML = merged
+  bodyEl.innerHTML = mergeCommentLists(base ? serverComments : [], commentsToShow)
     .map(
       (c) => `
     <div class="comment-row">
@@ -483,8 +482,11 @@ function renderTrackList(tracks) {
             return;
           }
           setStatus("Сохраняю комментарий...");
-          const { userId, author } = getCurrentTgAuthor();
-          appendLocalComment(trackId, userId, author, comment);
+        const apiBase = getApiBase();
+        const { userId, author } = getCurrentTgAuthor();
+        // Если API доступен, показываем комментарии глобально из БД.
+        // Локальное добавляем только как fallback, когда API недоступен.
+        if (!apiBase) appendLocalComment(trackId, userId, author, comment);
           tgSend({ action: "comment", trackId, comment });
           setStatus("Комментарий сохранён. Откройте «Комментарии».");
         }
