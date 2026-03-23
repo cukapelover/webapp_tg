@@ -90,12 +90,22 @@ function getApiBase() {
 async function fetchCommentsFromApi(trackId) {
   const base = getApiBase();
   if (!base) return null;
-  const url = `${base}/api/comments/${trackId}`;
-  const resp = await fetch(url, {
-    headers: { "ngrok-skip-browser-warning": "1" },
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return await resp.json();
+  const url = `${base}/api/comments/${trackId}?_ts=${Date.now()}`;
+  // Retry once because tunnels/webview can sporadically fail first request.
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const resp = await fetch(url, {
+        cache: "no-store",
+        headers: { "ngrok-skip-browser-warning": "1" },
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.json();
+    } catch (err) {
+      if (i === 1) throw err;
+      await new Promise((r) => setTimeout(r, 350));
+    }
+  }
+  return null;
 }
 
 function mergeCommentLists(serverList, localList) {
@@ -152,7 +162,7 @@ async function openCommentsModal(trackId, trackTitle) {
   const base = getApiBase();
   if (!base && hintEl) {
     hintEl.textContent =
-      "Без MUSIFY_API_BASE видны только ваши локальные комментарии. Для чужих — пробросьте API бота (ngrok) и укажите URL в index.html.";
+      "Глобальные комментарии недоступны: не задан API бота (BOT_PUBLIC_API_URL/MUSIFY_API_BASE).";
   }
 
   let serverComments = [];
@@ -167,7 +177,8 @@ async function openCommentsModal(trackId, trackTitle) {
       }));
     } catch (_) {
       if (hintEl) {
-        hintEl.textContent = "Не удалось загрузить комментарии с сервера.";
+        hintEl.textContent =
+          "Не удалось загрузить глобальные комментарии с сервера. Проверьте BOT_PUBLIC_API_URL и туннель.";
       }
     }
   }
