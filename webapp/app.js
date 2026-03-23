@@ -38,25 +38,72 @@ function tgSend(payload) {
 }
 
 async function searchTracks(query) {
+  function normalizeTracks(data) {
+    const items = Array.isArray(data?.data) ? data.data : [];
+    return items.map((it) => ({
+      id: it?.id,
+      title: it?.title,
+      link: it?.link,
+      preview: it?.preview,
+      artist: it?.artist,
+      album: it?.album,
+    }));
+  }
+
+  function jsonpSearch() {
+    return new Promise((resolve, reject) => {
+      const cbName = `deezerCb_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+      const script = document.createElement("script");
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("JSONP timeout"));
+      }, 8000);
+
+      function cleanup() {
+        window.clearTimeout(timeout);
+        try {
+          delete window[cbName];
+        } catch (_) {
+          window[cbName] = undefined;
+        }
+        script.remove();
+      }
+
+      window[cbName] = (payload) => {
+        cleanup();
+        resolve(normalizeTracks(payload));
+      };
+
+      const url = new URL("https://api.deezer.com/search");
+      url.searchParams.set("q", query);
+      url.searchParams.set("limit", "10");
+      url.searchParams.set("output", "jsonp");
+      url.searchParams.set("callback", cbName);
+      script.src = url.toString();
+      script.async = true;
+      script.onerror = () => {
+        cleanup();
+        reject(new Error("JSONP load failed"));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
   const url = new URL("https://api.deezer.com/search");
   url.searchParams.set("q", query);
   url.searchParams.set("limit", "10");
 
-  const resp = await fetch(url.toString(), { method: "GET" });
-  if (!resp.ok) {
-    throw new Error(`Deezer HTTP ${resp.status}`);
+  try {
+    const resp = await fetch(url.toString(), { method: "GET" });
+    if (!resp.ok) {
+      throw new Error(`Deezer HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    return normalizeTracks(data);
+  } catch (_) {
+    // Telegram WebView can block CORS fetch; JSONP is a safe fallback for Deezer search.
+    return await jsonpSearch();
   }
-
-  const data = await resp.json();
-  const items = Array.isArray(data?.data) ? data.data : [];
-  return items.map((it) => ({
-    id: it?.id,
-    title: it?.title,
-    link: it?.link,
-    preview: it?.preview,
-    artist: it?.artist,
-    album: it?.album,
-  }));
 }
 
 function renderTrackList(tracks) {
@@ -172,7 +219,7 @@ function setup() {
       }
     } catch (err) {
       setStatus("Не удалось загрузить результаты в Mini App, отправляю поиск в чат...");
-      tg.sendData(JSON.stringify({ action: "search", query }));
+      tgSend({ action: "search", query });
       return;
     }
   });
