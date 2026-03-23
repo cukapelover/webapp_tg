@@ -222,6 +222,7 @@ function renderTrackList(tracks) {
     const artist = t.artist?.name || "Unknown";
     const album = t.album?.title || "";
 
+    const likeText = likedTracks[String(id)] ? "Убрать лайк" : "Лайк";
     const card = document.createElement("div");
     card.className = "track";
     card.innerHTML = `
@@ -229,8 +230,9 @@ function renderTrackList(tracks) {
       <div class="meta small">${escapeHtml(album)}</div>
       <div class="row">
         <button type="button" data-action="play" data-id="${id}">Отправить в чат</button>
-        <button type="button" data-action="like" data-id="${id}">Лайк</button>
+        <button type="button" data-action="like" data-id="${id}">${likeText}</button>
         <button type="button" data-action="open" data-id="${id}">Открыть в Deezer</button>
+        <button type="button" data-action="view_comments" data-id="${id}">Комментарии</button>
       </div>
       <div class="row" style="align-items:flex-start">
         <div style="flex:1;">
@@ -264,6 +266,12 @@ function renderTrackList(tracks) {
         return;
       }
 
+      if (action === "view_comments") {
+        setStatus("Загружаю комментарии в чат...");
+        tgSend({ action: "view_comments", trackId });
+        return;
+      }
+
       if (action === "like") {
         const key = String(trackId);
         const alreadyLiked = Boolean(likedTracks[key]);
@@ -273,12 +281,14 @@ function renderTrackList(tracks) {
           setStatus("Лайк снят.");
           tgSend({ action: "like", trackId, liked: false });
           btn.textContent = "Лайк";
+          renderProfile();
         } else {
           likedTracks[key] = t;
           saveLikedTracks(likedTracks);
           setStatus("Лайк добавлен.");
           tgSend({ action: "like", trackId, liked: true });
           btn.textContent = "Убрать лайк";
+          renderProfile();
         }
         return;
       }
