@@ -25,21 +25,36 @@ function tgSend(payload) {
 }
 
 async function searchTracks(query) {
-  // Telegram WebApps run inside a WebView where direct calls to 3rd-party APIs can fail
-  // (CORS/network). Use a tiny public CORS proxy for Deezer search results.
-  //
-  // If you don't want to rely on a public proxy, tell me and we can switch to bot-mediated
-  // searching (JS -> bot -> results), but that's more complex UX-wise.
   const params = new URLSearchParams({ q: query, limit: "10" });
   const deezerUrl = `https://api.deezer.com/search?${params.toString()}`;
-  const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(deezerUrl)}`;
 
-  const resp = await fetch(url, { method: "GET" });
-  if (!resp.ok) throw new Error(`Deezer error: ${resp.status}`);
-  const data = await resp.json();
+  // WebView inside Telegram can block/alter access to 3rd party APIs.
+  // Try multiple JSON-capable proxies. If all fail, show the last error.
+  const proxyUrls = [
+    // allorigins
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(deezerUrl)}`,
+    // corsproxy.io
+    `https://corsproxy.io/?${encodeURIComponent(deezerUrl)}`,
+    // thingproxy (varies)
+    `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(deezerUrl)}`,
+  ];
 
-  const items = Array.isArray(data.data) ? data.data : [];
-  return items.filter((x) => x && x.type === "track").slice(0, 10);
+  const candidates = [deezerUrl, ...proxyUrls];
+  let lastErr = null;
+
+  for (const url of candidates) {
+    try {
+      const resp = await fetch(url, { method: "GET" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      const items = Array.isArray(data.data) ? data.data : [];
+      return items.filter((x) => x && x.type === "track").slice(0, 10);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw new Error(`Load failed (all attempts): ${lastErr?.message || lastErr}`);
 }
 
 function renderTrackList(tracks) {
@@ -134,7 +149,7 @@ function setup() {
       setStatus(`Готово: найдено ${tracks.length}.`);
     } catch (err) {
       console.error(err);
-      setStatus(`Ошибка: ${err.message || err}`);
+      setStatus(`Ошибка поиска: ${err.message || err}`);
     }
   });
 }
