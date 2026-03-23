@@ -839,7 +839,10 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(on_artistq, pattern=r"^artistq:"))
     application.add_handler(CallbackQueryHandler(on_albumq, pattern=r"^albumq:"))
     application.add_handler(CallbackQueryHandler(on_page, pattern=r"^page:"))
-    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, on_webapp_data))
+    # Some clients can deliver WebApp payloads in message updates that don't match
+    # StatusUpdate.WEB_APP_DATA consistently. We handle all messages and return early
+    # in on_webapp_data when there's no web_app_data payload.
+    application.add_handler(MessageHandler(filters.ALL, on_webapp_data))
     application.add_handler(CallbackQueryHandler(on_web_action_play, pattern=r"^webplay:"))
     application.add_handler(CallbackQueryHandler(on_web_action_like, pattern=r"^weblike:"))
     application.add_handler(CallbackQueryHandler(on_web_action_comment, pattern=r"^webcomment:"))
