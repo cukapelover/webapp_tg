@@ -53,6 +53,38 @@
         margin-top: 10px;
         background: rgba(255, 255, 255, 0.04);
       }
+      .track-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .track-title-line {
+        flex: 1;
+        min-width: 0;
+        word-break: break-word;
+      }
+      .like-count-pill {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(255, 255, 255, 0.07);
+        font-size: 13px;
+        line-height: 1;
+      }
+      .like-icon {
+        color: #ff6b9d;
+        font-size: 15px;
+        line-height: 1;
+      }
+      .like-num {
+        font-variant-numeric: tabular-nums;
+        min-width: 1.2ch;
+      }
       .meta { opacity: 0.9; margin-top: 4px; }
       .row { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
       .small { font-size: 12px; opacity: 0.9; }
