@@ -4,10 +4,12 @@ import logging
 import os
 import sqlite3
 import re
+import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -55,6 +57,19 @@ if WEBAPP_URL:
     if not WEBAPP_URL.startswith("https://"):
         logging.warning("WEBAPP_URL must start with https://, got: %r", WEBAPP_URL)
         WEBAPP_URL = None
+
+# Публичный HTTPS URL до API комментариев бота (ngrok / cloudflared / VPS), без слэша в конце.
+# Тогда Mini App откроется как .../index.html?api=https%3A%2F%2F... и фронт сам подставит MUSIFY_API_BASE.
+BOT_PUBLIC_API_URL = (os.getenv("BOT_PUBLIC_API_URL") or "").strip().rstrip("/")
+
+
+def _webapp_url_for_open() -> Optional[str]:
+    if not WEBAPP_URL or not _validate_webapp_url(WEBAPP_URL):
+        return None
+    if not BOT_PUBLIC_API_URL:
+        return WEBAPP_URL
+    sep = "&" if "?" in WEBAPP_URL else "?"
+    return f"{WEBAPP_URL}{sep}api={quote(BOT_PUBLIC_API_URL, safe='')}"
 
 
 def _validate_webapp_url(url: Optional[str]) -> bool:
@@ -214,6 +229,91 @@ def _get_track_comments(track_id: int, limit: int = 30) -> List[tuple[str, int, 
     ]
 
 
+def _comments_api_json_payload(track_id: int, limit: int = 100) -> Dict[str, Any]:
+    rows = _get_track_comments(track_id, limit=limit)
+    comments: List[Dict[str, Any]] = []
+    for username, author_id, comment, created_at in rows:
+        comments.append(
+            {
+                "username": username,
+                "user_id": author_id,
+                "text": comment,
+                "created_at": created_at,
+                "author": f"@{username}" if username else f"id:{author_id}",
+            }
+        )
+    return {"comments": comments}
+
+
+class CommentsAPIHandler(BaseHTTPRequestHandler):
+    """Tiny JSON API so the Mini App can show comments without posting to chat."""
+
+    def log_message(self, format: str, *args: Any) -> None:
+        logging.info("%s - %s", self.address_string(), format % args)
+
+    def _send_cors(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self._send_cors()
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if not parsed.path.startswith("/api/comments/"):
+            self.send_error(404)
+            return
+        tail = parsed.path[len("/api/comments/") :].strip("/")
+        if not tail:
+            self.send_error(404)
+            return
+        try:
+            track_id = int(tail.split("/", 1)[0])
+        except ValueError:
+            err = json.dumps({"error": "bad track id"}).encode("utf-8")
+            self.send_response(400)
+            self._send_cors()
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+        payload = _comments_api_json_payload(track_id)
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self._send_cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def _start_comments_api_server() -> None:
+    port_raw = os.getenv("COMMENTS_API_PORT", "8765")
+    host = os.getenv("COMMENTS_API_HOST", "0.0.0.0")
+    try:
+        port = int(port_raw)
+    except ValueError:
+        logging.warning("Invalid COMMENTS_API_PORT=%r, skipping comments API server.", port_raw)
+        return
+    try:
+        server = HTTPServer((host, port), CommentsAPIHandler)
+    except OSError as exc:
+        logging.warning("Could not start comments API on %s:%s: %s", host, port, exc)
+        return
+    thread = threading.Thread(target=server.serve_forever, daemon=True, name="comments-api")
+    thread.start()
+    logging.info(
+        "Comments API for Mini App: http://%s:%s/api/comments/<trackId> — "
+        "пробросьте наружу (ngrok/cloudflared) и укажите URL в webapp/index.html → MUSIFY_API_BASE",
+        host,
+        port,
+    )
+
+
 async def deezer_get_track(track_id: int) -> Optional[Dict[str, Any]]:
     url = f"https://api.deezer.com/track/{track_id}"
     async with httpx.AsyncClient(timeout=20) as client:
@@ -335,10 +435,10 @@ def _make_tracks_caption(query: str, offset: int) -> str:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    webapp_url = WEBAPP_URL if _validate_webapp_url(WEBAPP_URL) else None
+    webapp_open_url = _webapp_url_for_open()
     reply_markup = None
 
-    if webapp_url:
+    if webapp_open_url:
         # Use ReplyKeyboard WebApp button for reliable WebApp.sendData delivery.
         # In some Telegram clients, data from inline web_app buttons is less reliable.
         reply_markup = ReplyKeyboardMarkup(
@@ -346,7 +446,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 [
                     KeyboardButton(
                         text="Открыть мини‑приложение",
-                        web_app=WebAppInfo(url=webapp_url),
+                        web_app=WebAppInfo(url=webapp_open_url),
                     )
                 ]
             ],
@@ -355,7 +455,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     mini_hint = "мини‑приложение отключено (WEBAPP_URL не задан)."
-    if webapp_url:
+    if webapp_open_url:
         mini_hint = "мини‑приложение включено."
 
     try:
@@ -730,7 +830,7 @@ async def on_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if action == "like":
         liked = bool(payload.get("liked", True))
         _set_like(user.id, track_id=track_id, liked=liked)
-        await context.bot.send_message(chat_id=chat_id, text="Готово: лайк обновлен.")
+        # No chat spam: Mini App shows likes in "Профиль".
         return
 
     if action == "comment":
@@ -742,24 +842,11 @@ async def on_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
         _add_comment(user.id, track_id=track_id, comment=comment)
-        await context.bot.send_message(chat_id=chat_id, text="Комментарий сохранен.")
+        # Mini App shows comments in modal; avoid duplicate messages in chat.
         return
 
     if action == "view_comments":
-        rows = _get_track_comments(track_id=track_id, limit=30)
-        if not rows:
-            await context.bot.send_message(chat_id=chat_id, text="По этому треку пока нет комментариев.")
-            return
-
-        lines: List[str] = []
-        for username, author_id, comment, created_at in rows:
-            author = f"@{username}" if username else f"id:{author_id}"
-            lines.append(f"- {author} ({created_at}): {comment}")
-
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="Комментарии к треку:\n" + "\n".join(lines),
-        )
+        # Comments are loaded in Mini App via HTTP API (see _start_comments_api_server).
         return
 
     if action == "play":
@@ -880,7 +967,9 @@ async def on_albumq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     _init_db()
+    _start_comments_api_server()
     logging.info("WEBAPP_URL=%s", WEBAPP_URL)
+    logging.info("BOT_PUBLIC_API_URL=%s", BOT_PUBLIC_API_URL or "(not set — comments API only in Mini App if you set it)")
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", cmd_start))
