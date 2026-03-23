@@ -38,9 +38,25 @@ function tgSend(payload) {
 }
 
 async function searchTracks(query) {
-  // Deprecated: We don't fetch Deezer directly from WebApp due to Telegram WebView network/CORS restrictions.
-  // Kept only to avoid breaking the rest of the file if you later re-enable direct fetch.
-  return [];
+  const url = new URL("https://api.deezer.com/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("limit", "10");
+
+  const resp = await fetch(url.toString(), { method: "GET" });
+  if (!resp.ok) {
+    throw new Error(`Deezer HTTP ${resp.status}`);
+  }
+
+  const data = await resp.json();
+  const items = Array.isArray(data?.data) ? data.data : [];
+  return items.map((it) => ({
+    id: it?.id,
+    title: it?.title,
+    link: it?.link,
+    preview: it?.preview,
+    artist: it?.artist,
+    album: it?.album,
+  }));
 }
 
 function renderTrackList(tracks) {
@@ -67,6 +83,7 @@ function renderTrackList(tracks) {
       <div class="row">
         <button type="button" data-action="play" data-id="${id}">Отправить в чат</button>
         <button type="button" data-action="like" data-id="${id}">Лайк</button>
+        <button type="button" data-action="open" data-id="${id}">Открыть в Deezer</button>
       </div>
       <div class="row" style="align-items:flex-start">
         <div style="flex:1;">
@@ -91,6 +108,12 @@ function renderTrackList(tracks) {
       if (action === "play") {
         setStatus("Отправляю трек в чат...");
         tgSend({ action: "play", trackId });
+        return;
+      }
+
+      if (action === "open") {
+        const trackLink = t.link || `https://www.deezer.com/track/${trackId}`;
+        window.open(trackLink, "_blank", "noopener,noreferrer");
         return;
       }
 
@@ -126,7 +149,7 @@ function setup() {
     const query = q.value.trim();
     if (!query) return;
 
-    setStatus("Ищу... жду Telegram WebApp SDK...");
+    setStatus("Ищу в Deezer...");
     const tg = await waitForWebApp(5000);
     if (!tg) {
       setStatus("SDK недоступен. Проверь, что на Pages в index.html подключен telegram-web-app.js и что ты открыл WebApp заново.");
@@ -140,8 +163,18 @@ function setup() {
       // ignore
     }
 
-    setStatus("Ищу... Открой чат с ботом: результаты придут туда.");
-    tg.sendData(JSON.stringify({ action: "search", query }));
+    try {
+      const tracks = await searchTracks(query);
+      renderTrackList(tracks);
+      setStatus(`Найдено: ${tracks.length}`);
+      if (!tracks.length) {
+        return;
+      }
+    } catch (err) {
+      setStatus("Не удалось загрузить результаты в Mini App, отправляю поиск в чат...");
+      tg.sendData(JSON.stringify({ action: "search", query }));
+      return;
+    }
   });
 }
 
