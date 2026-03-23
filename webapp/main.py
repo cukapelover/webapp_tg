@@ -190,6 +190,30 @@ def _get_user_comments(user_id: int, track_id: int, limit: int = 10) -> List[tup
     return [(str(r[0]), str(r[1])) for r in rows]
 
 
+def _get_track_comments(track_id: int, limit: int = 30) -> List[tuple[str, int, str, str]]:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT u.username, c.user_id, c.comment, c.created_at
+            FROM comments c
+            LEFT JOIN users u ON u.user_id = c.user_id
+            WHERE c.track_id = ?
+            ORDER BY c.created_at DESC
+            LIMIT ?
+            """,
+            (track_id, limit),
+        ).fetchall()
+    return [
+        (
+            str(r[0]) if r[0] is not None else "",
+            int(r[1]),
+            str(r[2]),
+            str(r[3]),
+        )
+        for r in rows
+    ]
+
+
 async def deezer_get_track(track_id: int) -> Optional[Dict[str, Any]]:
     url = f"https://api.deezer.com/track/{track_id}"
     async with httpx.AsyncClient(timeout=20) as client:
@@ -719,6 +743,23 @@ async def on_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         _add_comment(user.id, track_id=track_id, comment=comment)
         await context.bot.send_message(chat_id=chat_id, text="Комментарий сохранен.")
+        return
+
+    if action == "view_comments":
+        rows = _get_track_comments(track_id=track_id, limit=30)
+        if not rows:
+            await context.bot.send_message(chat_id=chat_id, text="По этому треку пока нет комментариев.")
+            return
+
+        lines: List[str] = []
+        for username, author_id, comment, created_at in rows:
+            author = f"@{username}" if username else f"id:{author_id}"
+            lines.append(f"- {author} ({created_at}): {comment}")
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Комментарии к треку:\n" + "\n".join(lines),
+        )
         return
 
     if action == "play":
