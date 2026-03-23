@@ -1,6 +1,19 @@
 /* global window, document */
 
+// Если бот открыл WebApp с ?api=https%3A%2F%2F... (переменная BOT_PUBLIC_API_URL), подставляем базу API.
+(function initApiBaseFromQuery() {
+  try {
+    const q = new URLSearchParams(window.location.search).get("api");
+    if (q) {
+      window.MUSIFY_API_BASE = String(q).trim().replace(/\/$/, "");
+    }
+  } catch (_) {
+    // ignore
+  }
+})();
+
 const LIKES_STORAGE_KEY = "musify_liked_tracks_v1";
+const LOCAL_COMMENTS_KEY = "musify_local_comments_v1";
 
 function loadLikedTracks() {
   try {
@@ -22,6 +35,170 @@ function saveLikedTracks(likedTracks) {
 }
 
 let likedTracks = loadLikedTracks();
+
+function loadLocalCommentsStore() {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_COMMENTS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveLocalCommentsStore(store) {
+  try {
+    window.localStorage.setItem(LOCAL_COMMENTS_KEY, JSON.stringify(store));
+  } catch (_) {
+    // ignore
+  }
+}
+
+function getLocalCommentsForTrack(trackId) {
+  const all = loadLocalCommentsStore();
+  return all[String(trackId)] || [];
+}
+
+function appendLocalComment(trackId, userId, author, text) {
+  const all = loadLocalCommentsStore();
+  const key = String(trackId);
+  if (!all[key]) all[key] = [];
+  all[key].unshift({
+    user_id: userId,
+    author: author || "anon",
+    text,
+    created_at: new Date().toISOString(),
+  });
+  saveLocalCommentsStore(all);
+}
+
+function getCurrentTgAuthor() {
+  const u = window.Telegram?.WebApp?.initDataUnsafe?.user;
+  if (!u) return { userId: null, author: "anon" };
+  if (u.username) return { userId: u.id, author: `@${u.username}` };
+  const name = [u.first_name, u.last_name].filter(Boolean).join(" ");
+  if (name) return { userId: u.id, author: name };
+  return { userId: u.id, author: `id:${u.id}` };
+}
+
+function getApiBase() {
+  const b = (typeof window !== "undefined" && window.MUSIFY_API_BASE) || "";
+  return String(b).trim().replace(/\/$/, "");
+}
+
+async function fetchCommentsFromApi(trackId) {
+  const base = getApiBase();
+  if (!base) return null;
+  const url = `${base}/api/comments/${trackId}`;
+  const resp = await fetch(url, {
+    headers: { "ngrok-skip-browser-warning": "1" },
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.json();
+}
+
+function mergeCommentLists(serverList, localList) {
+  const seen = new Set();
+  const out = [];
+  const add = (c) => {
+    const uid = c.user_id != null ? String(c.user_id) : "x";
+    const key = `${uid}|${c.text}|${c.created_at}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(c);
+  };
+  for (const c of serverList || []) add(c);
+  for (const c of localList || []) add(c);
+  out.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  return out;
+}
+
+let commentsModalBound = false;
+
+function setupCommentsModal() {
+  if (commentsModalBound) return;
+  commentsModalBound = true;
+  const modal = document.getElementById("commentsModal");
+  const closeBtn = document.getElementById("commentsModalClose");
+  closeBtn?.addEventListener("click", closeCommentsModal);
+  modal?.addEventListener("click", (e) => {
+    if (e.target === modal) closeCommentsModal();
+  });
+}
+
+function closeCommentsModal() {
+  const modal = document.getElementById("commentsModal");
+  if (modal) {
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }
+}
+
+async function openCommentsModal(trackId, trackTitle) {
+  setupCommentsModal();
+  const modal = document.getElementById("commentsModal");
+  const titleEl = document.getElementById("commentsModalTitle");
+  const hintEl = document.getElementById("commentsModalHint");
+  const bodyEl = document.getElementById("commentsModalBody");
+  if (!modal || !titleEl || !bodyEl) return;
+
+  titleEl.textContent = trackTitle ? `Комментарии: ${trackTitle}` : "Комментарии к треку";
+  if (hintEl) hintEl.textContent = "";
+  bodyEl.innerHTML = `<div class="small">Загрузка…</div>`;
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+
+  const base = getApiBase();
+  if (!base && hintEl) {
+    hintEl.textContent =
+      "Без MUSIFY_API_BASE видны только ваши локальные комментарии. Для чужих — пробросьте API бота (ngrok) и укажите URL в index.html.";
+  }
+
+  let serverComments = [];
+  if (base) {
+    try {
+      const data = await fetchCommentsFromApi(trackId);
+      serverComments = (data?.comments || []).map((c) => ({
+        user_id: c.user_id,
+        author: c.author,
+        text: c.text,
+        created_at: c.created_at,
+      }));
+    } catch (_) {
+      if (hintEl) {
+        hintEl.textContent =
+          "Не удалось загрузить комментарии с сервера. Показаны только локальные.";
+      }
+    }
+  }
+
+  const localComments = getLocalCommentsForTrack(trackId).map((c) => ({
+    user_id: c.user_id,
+    author: c.author,
+    text: c.text,
+    created_at: c.created_at,
+  }));
+
+  const merged = mergeCommentLists(serverComments, localComments);
+
+  if (!merged.length) {
+    bodyEl.innerHTML = `<div class="small">Пока нет комментариев.</div>`;
+    return;
+  }
+
+  bodyEl.innerHTML = merged
+    .map(
+      (c) => `
+    <div class="comment-row">
+      <div class="comment-author">${escapeHtml(c.author)}</div>
+      <div class="comment-meta">${escapeHtml(c.created_at)}</div>
+      <div class="comment-text">${escapeHtml(c.text)}</div>
+    </div>
+  `
+    )
+    .join("");
+}
 
 function getWebApp() {
   return window.Telegram?.WebApp || null;
@@ -91,7 +268,8 @@ function renderProfile() {
 
   profile.innerHTML = "";
   for (const t of tracks) {
-    const id = t.id;
+    const id = Number(t.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
     const title = t.title || "Track";
     const artist = t.artist?.name || "Unknown";
     const album = t.album?.title || "";
@@ -103,6 +281,7 @@ function renderProfile() {
       <div class="row">
         <button type="button" data-profile-action="play" data-id="${id}">Отправить в чат</button>
         <button type="button" data-profile-action="open" data-id="${id}">Открыть в Deezer</button>
+        <button type="button" data-profile-action="comments" data-id="${id}">Комментарии</button>
         <button type="button" data-profile-action="unlike" data-id="${id}">Убрать лайк</button>
       </div>
     `;
@@ -124,6 +303,10 @@ function renderProfile() {
       if (action === "open") {
         const trackLink = track.link || `https://www.deezer.com/track/${trackId}`;
         window.open(trackLink, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (action === "comments") {
+        openCommentsModal(trackId, track.title || "");
         return;
       }
       if (action === "unlike") {
@@ -217,7 +400,8 @@ function renderTrackList(tracks) {
   }
 
   for (const t of tracks) {
-    const id = t.id;
+    const id = Number(t.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
     const title = t.title || "Track";
     const artist = t.artist?.name || "Unknown";
     const album = t.album?.title || "";
@@ -245,66 +429,68 @@ function renderTrackList(tracks) {
       </div>
     `;
     results.appendChild(card);
-  }
 
-  results.querySelectorAll("button[data-action]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const action = btn.getAttribute("data-action");
-      const trackId = Number(btn.getAttribute("data-id"));
+    // Важно: обработчики внутри цикла, чтобы не ссылаться на последний трек (closure bug).
+    card.querySelectorAll("button[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.getAttribute("data-action");
+        const trackId = Number(btn.getAttribute("data-id"));
+        if (!trackId) return;
 
-      if (!trackId) return;
-
-      if (action === "play") {
-        setStatus("Отправляю трек в чат...");
-        tgSend({ action: "play", trackId });
-        return;
-      }
-
-      if (action === "open") {
-        const trackLink = t.link || `https://www.deezer.com/track/${trackId}`;
-        window.open(trackLink, "_blank", "noopener,noreferrer");
-        return;
-      }
-
-      if (action === "view_comments") {
-        setStatus("Загружаю комментарии в чат...");
-        tgSend({ action: "view_comments", trackId });
-        return;
-      }
-
-      if (action === "like") {
-        const key = String(trackId);
-        const alreadyLiked = Boolean(likedTracks[key]);
-        if (alreadyLiked) {
-          delete likedTracks[key];
-          saveLikedTracks(likedTracks);
-          setStatus("Лайк снят.");
-          tgSend({ action: "like", trackId, liked: false });
-          btn.textContent = "Лайк";
-          renderProfile();
-        } else {
-          likedTracks[key] = t;
-          saveLikedTracks(likedTracks);
-          setStatus("Лайк добавлен.");
-          tgSend({ action: "like", trackId, liked: true });
-          btn.textContent = "Убрать лайк";
-          renderProfile();
-        }
-        return;
-      }
-
-      if (action === "comment") {
-        const ta = document.querySelector(`textarea[data-comment-for="${trackId}"]`);
-        const comment = (ta?.value || "").trim();
-        if (!comment) {
-          setStatus("Введите комментарий.");
+        if (action === "play") {
+          setStatus("Отправляю трек в чат...");
+          tgSend({ action: "play", trackId });
           return;
         }
-        setStatus("Сохраняю комментарий...");
-        tgSend({ action: "comment", trackId, comment });
-      }
+
+        if (action === "open") {
+          const trackLink = t.link || `https://www.deezer.com/track/${trackId}`;
+          window.open(trackLink, "_blank", "noopener,noreferrer");
+          return;
+        }
+
+        if (action === "view_comments") {
+          setStatus("");
+          openCommentsModal(trackId, title);
+          return;
+        }
+
+        if (action === "like") {
+          const key = String(trackId);
+          const alreadyLiked = Boolean(likedTracks[key]);
+          if (alreadyLiked) {
+            delete likedTracks[key];
+            saveLikedTracks(likedTracks);
+            setStatus("Лайк снят.");
+            tgSend({ action: "like", trackId, liked: false });
+            btn.textContent = "Лайк";
+          } else {
+            likedTracks[key] = { ...t, id: trackId };
+            saveLikedTracks(likedTracks);
+            setStatus("Лайк добавлен.");
+            tgSend({ action: "like", trackId, liked: true });
+            btn.textContent = "Убрать лайк";
+          }
+          renderProfile();
+          return;
+        }
+
+        if (action === "comment") {
+          const ta = card.querySelector(`textarea[data-comment-for="${trackId}"]`);
+          const comment = (ta?.value || "").trim();
+          if (!comment) {
+            setStatus("Введите комментарий.");
+            return;
+          }
+          setStatus("Сохраняю комментарий...");
+          const { userId, author } = getCurrentTgAuthor();
+          appendLocalComment(trackId, userId, author, comment);
+          tgSend({ action: "comment", trackId, comment });
+          setStatus("Комментарий сохранён. Откройте «Комментарии».");
+        }
+      });
     });
-  });
+  }
 }
 
 function setup() {
@@ -316,6 +502,7 @@ function setup() {
 
   tabSearch?.addEventListener("click", () => showSection("search"));
   tabProfile?.addEventListener("click", () => showSection("profile"));
+  setupCommentsModal();
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
