@@ -25,10 +25,16 @@ function tgSend(payload) {
 }
 
 async function searchTracks(query) {
+  // Telegram WebApps run inside a WebView where direct calls to 3rd-party APIs can fail
+  // (CORS/network). Use a tiny public CORS proxy for Deezer search results.
+  //
+  // If you don't want to rely on a public proxy, tell me and we can switch to bot-mediated
+  // searching (JS -> bot -> results), but that's more complex UX-wise.
   const params = new URLSearchParams({ q: query, limit: "10" });
-  const url = `https://api.deezer.com/search?${params.toString()}`;
+  const deezerUrl = `https://api.deezer.com/search?${params.toString()}`;
+  const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(deezerUrl)}`;
 
-  const resp = await fetch(url);
+  const resp = await fetch(url, { method: "GET" });
   if (!resp.ok) throw new Error(`Deezer error: ${resp.status}`);
   const data = await resp.json();
 
