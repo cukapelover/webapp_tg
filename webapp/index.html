@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Музыка</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 12px;
+        background: #0b0f19;
+        color: #e8eefc;
+      }
+      .card {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+        padding: 12px;
+        margin-top: 12px;
+      }
+      input, button {
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.08);
+        color: #e8eefc;
+        outline: none;
+      }
+      button { cursor: pointer; }
+      form { display: flex; gap: 10px; }
+      #results { margin-top: 14px; }
+      .track {
+        padding: 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        margin-top: 10px;
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .meta { opacity: 0.9; margin-top: 4px; }
+      .row { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+      .small { font-size: 12px; opacity: 0.9; }
+      textarea { width: 100%; min-height: 44px; resize: vertical; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">Музыка (Deezer)</h2>
+      </div>
+      <form id="searchForm">
+        <input id="q" placeholder="Поиск: исполнитель или трек" maxlength="120" />
+        <button type="submit">Поиск</button>
+      </form>
+      <div id="status" class="small" style="margin-top:10px;"></div>
+      <div id="results"></div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
+
