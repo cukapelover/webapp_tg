@@ -10,6 +10,23 @@
         margin: 12px;
         background: #0b0f19;
         color: #e8eefc;
+        min-height: 100vh;
+      }
+      /* Fullscreen background image with dark overlay for readability */
+      .bg {
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        background-image: url("player.png");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+      }
+      .bg::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
       }
       .card {
         background: rgba(255, 255, 255, 0.06);
@@ -43,6 +60,7 @@
     </style>
   </head>
   <body>
+    <div class="bg"></div>
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <h2 style="margin:0;">Музыка (Deezer)</h2>
