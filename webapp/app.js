@@ -1,6 +1,18 @@
 /* global window, document */
 
-const tg = window.Telegram?.WebApp;
+function getWebApp() {
+  return window.Telegram?.WebApp || null;
+}
+
+async function waitForWebApp(timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const tg = getWebApp();
+    if (tg) return tg;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return null;
+}
 
 function setStatus(text) {
   const el = document.getElementById("status");
@@ -17,8 +29,9 @@ function escapeHtml(s) {
 }
 
 function tgSend(payload) {
+  const tg = getWebApp();
   if (!tg || !tg.sendData) {
-    alert("Telegram WebApp SDK недоступен");
+    alert("Telegram WebApp SDK недоступен (window.Telegram.WebApp не найден)");
     return;
   }
   tg.sendData(JSON.stringify(payload));
@@ -104,8 +117,6 @@ function renderTrackList(tracks) {
 }
 
 function setup() {
-  if (tg) tg.ready();
-
   const form = document.getElementById("searchForm");
   const q = document.getElementById("q");
   if (!form || !q) return;
@@ -115,9 +126,22 @@ function setup() {
     const query = q.value.trim();
     if (!query) return;
 
+    setStatus("Ищу... жду Telegram WebApp SDK...");
+    const tg = await waitForWebApp(5000);
+    if (!tg) {
+      setStatus("SDK недоступен. Проверь, что на Pages в index.html подключен telegram-web-app.js и что ты открыл WebApp заново.");
+      return;
+    }
+
+    try {
+      tg.ready?.();
+      tg.expand?.();
+    } catch (_) {
+      // ignore
+    }
+
     setStatus("Ищу... Открой чат с ботом: результаты придут туда.");
-    // Ask the bot to do the search (server-side), so we don't depend on WebView network access.
-    tgSend({ action: "search", query });
+    tg.sendData(JSON.stringify({ action: "search", query }));
   });
 }
 
