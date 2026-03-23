@@ -11,7 +11,14 @@ from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 import httpx
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+    WebAppInfo,
+)
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
@@ -304,19 +311,24 @@ def _make_tracks_caption(query: str, offset: int) -> str:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    buttons: List[List[InlineKeyboardButton]] = []
     webapp_url = WEBAPP_URL if _validate_webapp_url(WEBAPP_URL) else None
-    if webapp_url:
-        buttons = [
-            [
-                InlineKeyboardButton(
-                    text="Открыть мини‑приложение",
-                    web_app=WebAppInfo(url=webapp_url),
-                )
-            ]
-        ]
+    reply_markup = None
 
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    if webapp_url:
+        # Use ReplyKeyboard WebApp button for reliable WebApp.sendData delivery.
+        # In some Telegram clients, data from inline web_app buttons is less reliable.
+        reply_markup = ReplyKeyboardMarkup(
+            [
+                [
+                    KeyboardButton(
+                        text="Открыть мини‑приложение",
+                        web_app=WebAppInfo(url=webapp_url),
+                    )
+                ]
+            ],
+            resize_keyboard=True,
+            is_persistent=True,
+        )
 
     mini_hint = "мини‑приложение отключено (WEBAPP_URL не задан)."
     if webapp_url:
@@ -329,6 +341,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/search <запрос> — результаты с кнопками.\n"
             "/likes — мои лайки.\n\n"
             f"Статус: {mini_hint}\n\n"
+            "Открывай Mini App через кнопку клавиатуры под сообщением.\n\n"
             "В Telegram отправляется только `preview` (короткий фрагмент) и ссылка на Deezer.\n",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=reply_markup,
