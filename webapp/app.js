@@ -1,5 +1,28 @@
 /* global window, document */
 
+const LIKES_STORAGE_KEY = "musify_liked_tracks_v1";
+
+function loadLikedTracks() {
+  try {
+    const raw = window.localStorage.getItem(LIKES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveLikedTracks(likedTracks) {
+  try {
+    window.localStorage.setItem(LIKES_STORAGE_KEY, JSON.stringify(likedTracks));
+  } catch (_) {
+    // ignore storage errors
+  }
+}
+
+let likedTracks = loadLikedTracks();
+
 function getWebApp() {
   return window.Telegram?.WebApp || null;
 }
@@ -35,6 +58,83 @@ function tgSend(payload) {
     return;
   }
   tg.sendData(JSON.stringify(payload));
+}
+
+function showSection(section) {
+  const results = document.getElementById("results");
+  const profile = document.getElementById("profile");
+  const form = document.getElementById("searchForm");
+  if (!results || !profile || !form) return;
+
+  if (section === "profile") {
+    form.style.display = "none";
+    results.style.display = "none";
+    profile.style.display = "block";
+    renderProfile();
+    return;
+  }
+
+  form.style.display = "flex";
+  results.style.display = "block";
+  profile.style.display = "none";
+}
+
+function renderProfile() {
+  const profile = document.getElementById("profile");
+  if (!profile) return;
+
+  const tracks = Object.values(likedTracks);
+  if (!tracks.length) {
+    profile.innerHTML = `<div class="small">Пока нет лайков. Нажмите "Лайк" у трека в поиске.</div>`;
+    return;
+  }
+
+  profile.innerHTML = "";
+  for (const t of tracks) {
+    const id = t.id;
+    const title = t.title || "Track";
+    const artist = t.artist?.name || "Unknown";
+    const album = t.album?.title || "";
+    const card = document.createElement("div");
+    card.className = "track";
+    card.innerHTML = `
+      <div><b>${escapeHtml(artist)}</b> — ${escapeHtml(title)}</div>
+      <div class="meta small">${escapeHtml(album)}</div>
+      <div class="row">
+        <button type="button" data-profile-action="play" data-id="${id}">Отправить в чат</button>
+        <button type="button" data-profile-action="open" data-id="${id}">Открыть в Deezer</button>
+        <button type="button" data-profile-action="unlike" data-id="${id}">Убрать лайк</button>
+      </div>
+    `;
+    profile.appendChild(card);
+  }
+
+  profile.querySelectorAll("button[data-profile-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const action = btn.getAttribute("data-profile-action");
+      const trackId = Number(btn.getAttribute("data-id"));
+      const track = likedTracks[String(trackId)];
+      if (!trackId || !track) return;
+
+      if (action === "play") {
+        setStatus("Отправляю трек в чат...");
+        tgSend({ action: "play", trackId });
+        return;
+      }
+      if (action === "open") {
+        const trackLink = track.link || `https://www.deezer.com/track/${trackId}`;
+        window.open(trackLink, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (action === "unlike") {
+        delete likedTracks[String(trackId)];
+        saveLikedTracks(likedTracks);
+        setStatus("Лайк снят.");
+        tgSend({ action: "like", trackId, liked: false });
+        renderProfile();
+      }
+    });
+  });
 }
 
 async function searchTracks(query) {
@@ -165,10 +265,21 @@ function renderTrackList(tracks) {
       }
 
       if (action === "like") {
-        // Simple optimistic UX: toggle locally not stored here.
-        // The bot will interpret liked=true by default if you only send action + trackId.
-        setStatus("Обновляю лайк...");
-        tgSend({ action: "like", trackId, liked: true });
+        const key = String(trackId);
+        const alreadyLiked = Boolean(likedTracks[key]);
+        if (alreadyLiked) {
+          delete likedTracks[key];
+          saveLikedTracks(likedTracks);
+          setStatus("Лайк снят.");
+          tgSend({ action: "like", trackId, liked: false });
+          btn.textContent = "Лайк";
+        } else {
+          likedTracks[key] = t;
+          saveLikedTracks(likedTracks);
+          setStatus("Лайк добавлен.");
+          tgSend({ action: "like", trackId, liked: true });
+          btn.textContent = "Убрать лайк";
+        }
         return;
       }
 
@@ -189,7 +300,12 @@ function renderTrackList(tracks) {
 function setup() {
   const form = document.getElementById("searchForm");
   const q = document.getElementById("q");
+  const tabSearch = document.getElementById("tabSearch");
+  const tabProfile = document.getElementById("tabProfile");
   if (!form || !q) return;
+
+  tabSearch?.addEventListener("click", () => showSection("search"));
+  tabProfile?.addEventListener("click", () => showSection("profile"));
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
