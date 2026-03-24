@@ -58,8 +58,8 @@ if WEBAPP_URL:
         logging.warning("WEBAPP_URL must start with https://, got: %r", WEBAPP_URL)
         WEBAPP_URL = None
 
-# Публичный HTTPS URL до API комментариев бота (ngrok / cloudflared / VPS), без слэша в конце.
-# Тогда Mini App откроется как .../index.html?api=https%3A%2F%2F... и фронт сам подставит MUSIFY_API_BASE.
+# Публичный HTTPS URL до HTTP-API бота (тот же процесс, что polling), без слэша в конце.
+# Важно: часть клиентов Telegram обрезает query (?api=...) у WebApp URL, поэтому добавляем ещё и #api=...
 BOT_PUBLIC_API_URL = (os.getenv("BOT_PUBLIC_API_URL") or "").strip().rstrip("/")
 
 
@@ -68,8 +68,11 @@ def _webapp_url_for_open() -> Optional[str]:
         return None
     if not BOT_PUBLIC_API_URL:
         return WEBAPP_URL
-    sep = "&" if "?" in WEBAPP_URL else "?"
-    return f"{WEBAPP_URL}{sep}api={quote(BOT_PUBLIC_API_URL, safe='')}"
+    base = WEBAPP_URL.split("#", 1)[0]
+    sep = "&" if "?" in base else "?"
+    encoded = quote(BOT_PUBLIC_API_URL, safe="")
+    # query + hash: фронт прочитает что доступно
+    return f"{base}{sep}api={encoded}#api={encoded}"
 
 
 def _validate_webapp_url(url: Optional[str]) -> bool:
