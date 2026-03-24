@@ -1,67 +1,16 @@
 /* global window, document */
 
-const API_BASE_STORAGE_KEY = "musify_api_base_v1";
-
-function cleanApiBase(v) {
-  return String(v || "")
-    .trim()
-    .replace(/\/$/, "");
-}
-
-/** Подставляет URL сервера бота для /api/comments и /api/likes (без API-ключей). */
-function initApiBaseFromEnvironment() {
+// Из ссылки Web App, которую подставляет бот (?api=... при BOT_PUBLIC_API_URL).
+(function initApiBaseFromQuery() {
   try {
     const q = new URLSearchParams(window.location.search).get("api");
     if (q) {
-      const b = cleanApiBase(q);
-      if (b) {
-        window.MUSIFY_API_BASE = b;
-        try {
-          localStorage.setItem(API_BASE_STORAGE_KEY, b);
-        } catch (_) {
-          // ignore
-        }
-        return;
-      }
+      window.MUSIFY_API_BASE = String(q).trim().replace(/\/$/, "");
     }
   } catch (_) {
     // ignore
   }
-
-  try {
-    const rawHash = window.location.hash || "";
-    if (rawHash.length > 1) {
-      const hp = new URLSearchParams(rawHash.startsWith("#") ? rawHash.slice(1) : rawHash);
-      const ha = hp.get("api");
-      if (ha) {
-        const b = cleanApiBase(ha);
-        if (b) {
-          window.MUSIFY_API_BASE = b;
-          try {
-            localStorage.setItem(API_BASE_STORAGE_KEY, b);
-          } catch (_) {
-            // ignore
-          }
-          return;
-        }
-      }
-    }
-  } catch (_) {
-    // ignore
-  }
-
-  try {
-    const st = localStorage.getItem(API_BASE_STORAGE_KEY);
-    if (st) {
-      const b = cleanApiBase(st);
-      if (b) window.MUSIFY_API_BASE = b;
-    }
-  } catch (_) {
-    // ignore
-  }
-}
-
-initApiBaseFromEnvironment();
+})();
 
 const LIKES_STORAGE_KEY = "musify_liked_tracks_v1";
 const LOCAL_COMMENTS_KEY = "musify_local_comments_v1";
@@ -134,60 +83,53 @@ function getCurrentTgAuthor() {
 }
 
 function getApiBase() {
-  return cleanApiBase(typeof window !== "undefined" ? window.MUSIFY_API_BASE : "");
+  const b = (typeof window !== "undefined" && window.MUSIFY_API_BASE) || "";
+  return String(b).trim().replace(/\/$/, "");
 }
 
-function updateApiBannerVisibility() {
-  const banner = document.getElementById("apiConnectBanner");
-  const manual = document.getElementById("apiBaseManual");
-  if (manual && !manual.value && getApiBase()) {
-    manual.value = getApiBase();
+/** Запрос к HTTP-API бота: сначала без лишних заголовков (проще CORS), затем с заголовком ngrok. */
+async function fetchJsonFromBotApi(url) {
+  const strategies = [
+    () => fetch(url, { cache: "no-store", mode: "cors" }),
+    () =>
+      fetch(url, {
+        cache: "no-store",
+        mode: "cors",
+        headers: { "ngrok-skip-browser-warning": "1" },
+      }),
+  ];
+  let lastErr = null;
+  for (const makeFetch of strategies) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const resp = await makeFetch();
+        if (!resp.ok) {
+          lastErr = new Error(`HTTP ${resp.status}`);
+          continue;
+        }
+        return await resp.json();
+      } catch (e) {
+        lastErr = e;
+      }
+      await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+    }
   }
-  if (banner) {
-    banner.style.display = getApiBase() ? "none" : "block";
-  }
+  throw lastErr || new Error("fetch failed");
 }
 
 async function fetchCommentsFromApi(trackId) {
   const base = getApiBase();
   if (!base) return null;
   const url = `${base}/api/comments/${trackId}?_ts=${Date.now()}`;
-  // Retry once because tunnels/webview can sporadically fail first request.
-  for (let i = 0; i < 2; i += 1) {
-    try {
-      const resp = await fetch(url, {
-        cache: "no-store",
-        headers: { "ngrok-skip-browser-warning": "1" },
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return await resp.json();
-    } catch (err) {
-      if (i === 1) throw err;
-      await new Promise((r) => setTimeout(r, 350));
-    }
-  }
-  return null;
+  return await fetchJsonFromBotApi(url);
 }
 
 async function fetchLikeCounts(trackIds) {
   const base = getApiBase();
   if (!base || !trackIds.length) return {};
   const url = `${base}/api/likes?ids=${trackIds.join(",")}&_ts=${Date.now()}`;
-  for (let i = 0; i < 2; i += 1) {
-    try {
-      const resp = await fetch(url, {
-        cache: "no-store",
-        headers: { "ngrok-skip-browser-warning": "1" },
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      return data.likes || {};
-    } catch (err) {
-      if (i === 1) throw err;
-      await new Promise((r) => setTimeout(r, 350));
-    }
-  }
-  return {};
+  const data = await fetchJsonFromBotApi(url);
+  return data.likes || {};
 }
 
 function setLikeBadgeText(trackId, text) {
@@ -211,7 +153,7 @@ async function refreshLikeBadges(trackIds) {
       setLikeBadgeText(id, v != null ? String(v) : "0");
     }
   } catch (_) {
-    uniq.forEach((id) => setLikeBadgeText(id, "?"));
+    uniq.forEach((id) => setLikeBadgeText(id, "–"));
   }
 }
 
@@ -269,7 +211,7 @@ async function openCommentsModal(trackId, trackTitle) {
   const base = getApiBase();
   if (!base && hintEl) {
     hintEl.textContent =
-      "Глобальные комментарии недоступны: не задан API бота (BOT_PUBLIC_API_URL/MUSIFY_API_BASE).";
+      "Без публичного URL сервера бота (BOT_PUBLIC_API_URL / поле в index.html) видны только локальные комментарии.";
   }
 
   let serverComments = [];
@@ -284,8 +226,7 @@ async function openCommentsModal(trackId, trackTitle) {
       }));
     } catch (_) {
       if (hintEl) {
-        hintEl.textContent =
-          "Не удалось загрузить глобальные комментарии с сервера. Проверьте BOT_PUBLIC_API_URL и туннель.";
+        hintEl.textContent = "Не удалось загрузить комментарии с сервера.";
       }
     }
   }
@@ -640,36 +581,11 @@ function setup() {
   const q = document.getElementById("q");
   const tabSearch = document.getElementById("tabSearch");
   const tabProfile = document.getElementById("tabProfile");
-  const apiSave = document.getElementById("apiBaseSave");
-  const apiManual = document.getElementById("apiBaseManual");
   if (!form || !q) return;
 
   tabSearch?.addEventListener("click", () => showSection("search"));
   tabProfile?.addEventListener("click", () => showSection("profile"));
   setupCommentsModal();
-
-  apiSave?.addEventListener("click", () => {
-    const raw = (apiManual?.value || "").trim();
-    const b = cleanApiBase(raw);
-    if (!b || !b.startsWith("https://")) {
-      setStatus("Укажите корректный https:// URL сервера бота (без слэша в конце).");
-      return;
-    }
-    window.MUSIFY_API_BASE = b;
-    try {
-      localStorage.setItem(API_BASE_STORAGE_KEY, b);
-    } catch (_) {
-      // ignore
-    }
-    setStatus("Сервер подключён. Обновляю счётчики…");
-    updateApiBannerVisibility();
-    const ids = [...document.querySelectorAll("[data-like-count-for]")]
-      .map((el) => Number(el.getAttribute("data-like-count-for")))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    void refreshLikeBadges(ids);
-  });
-
-  updateApiBannerVisibility();
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
