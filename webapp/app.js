@@ -1,14 +1,24 @@
 /* global window, document */
 
-// Из ссылки Web App, которую подставляет бот (?api=... при BOT_PUBLIC_API_URL).
-(function initApiBaseFromQuery() {
+// URL сервера бота: query ?api= и/или фрагмент #api= (Telegram часто режет только query).
+(function initApiBase() {
   try {
     const q = new URLSearchParams(window.location.search).get("api");
-    if (q) {
-      window.MUSIFY_API_BASE = String(q).trim().replace(/\/$/, "");
-    }
+    if (q) window.MUSIFY_API_BASE = String(q).trim().replace(/\/$/, "");
   } catch (_) {
     // ignore
+  }
+  if (!window.MUSIFY_API_BASE) {
+    try {
+      const h = window.location.hash || "";
+      if (h.length > 1) {
+        const hp = new URLSearchParams(h.startsWith("#") ? h.slice(1) : h);
+        const ha = hp.get("api");
+        if (ha) window.MUSIFY_API_BASE = String(ha).trim().replace(/\/$/, "");
+      }
+    } catch (_) {
+      // ignore
+    }
   }
 })();
 
@@ -124,12 +134,57 @@ async function fetchCommentsFromApi(trackId) {
   return await fetchJsonFromBotApi(url);
 }
 
+function fetchLikeCountsJsonp(base, trackIds) {
+  return new Promise((resolve, reject) => {
+    const cbName = `musifyLikes_${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
+    const script = document.createElement("script");
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("jsonp timeout"));
+    }, 15000);
+
+    function cleanup() {
+      window.clearTimeout(timeout);
+      try {
+        delete window[cbName];
+      } catch (_) {
+        window[cbName] = undefined;
+      }
+      script.remove();
+    }
+
+    window[cbName] = (payload) => {
+      cleanup();
+      resolve((payload && payload.likes) || {});
+    };
+
+    const qp = new URLSearchParams();
+    qp.set("ids", trackIds.join(","));
+    qp.set("_ts", String(Date.now()));
+    qp.set("callback", cbName);
+    script.src = `${base}/api/likes?${qp.toString()}`;
+    script.async = true;
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("jsonp failed"));
+    };
+    document.head.appendChild(script);
+  });
+}
+
 async function fetchLikeCounts(trackIds) {
   const base = getApiBase();
   if (!base || !trackIds.length) return {};
-  const url = `${base}/api/likes?ids=${trackIds.join(",")}&_ts=${Date.now()}`;
-  const data = await fetchJsonFromBotApi(url);
-  return data.likes || {};
+  const qp = new URLSearchParams();
+  qp.set("ids", trackIds.join(","));
+  qp.set("_ts", String(Date.now()));
+  const url = `${base}/api/likes?${qp.toString()}`;
+  try {
+    const data = await fetchJsonFromBotApi(url);
+    return data.likes || {};
+  } catch (_) {
+    return await fetchLikeCountsJsonp(base, trackIds);
+  }
 }
 
 function setLikeBadgeText(trackId, text) {
