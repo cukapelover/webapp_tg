@@ -1,16 +1,67 @@
 /* global window, document */
 
-// Если бот открыл WebApp с ?api=https%3A%2F%2F... (переменная BOT_PUBLIC_API_URL), подставляем базу API.
-(function initApiBaseFromQuery() {
+const API_BASE_STORAGE_KEY = "musify_api_base_v1";
+
+function cleanApiBase(v) {
+  return String(v || "")
+    .trim()
+    .replace(/\/$/, "");
+}
+
+/** Подставляет URL сервера бота для /api/comments и /api/likes (без API-ключей). */
+function initApiBaseFromEnvironment() {
   try {
     const q = new URLSearchParams(window.location.search).get("api");
     if (q) {
-      window.MUSIFY_API_BASE = String(q).trim().replace(/\/$/, "");
+      const b = cleanApiBase(q);
+      if (b) {
+        window.MUSIFY_API_BASE = b;
+        try {
+          localStorage.setItem(API_BASE_STORAGE_KEY, b);
+        } catch (_) {
+          // ignore
+        }
+        return;
+      }
     }
   } catch (_) {
     // ignore
   }
-})();
+
+  try {
+    const rawHash = window.location.hash || "";
+    if (rawHash.length > 1) {
+      const hp = new URLSearchParams(rawHash.startsWith("#") ? rawHash.slice(1) : rawHash);
+      const ha = hp.get("api");
+      if (ha) {
+        const b = cleanApiBase(ha);
+        if (b) {
+          window.MUSIFY_API_BASE = b;
+          try {
+            localStorage.setItem(API_BASE_STORAGE_KEY, b);
+          } catch (_) {
+            // ignore
+          }
+          return;
+        }
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  try {
+    const st = localStorage.getItem(API_BASE_STORAGE_KEY);
+    if (st) {
+      const b = cleanApiBase(st);
+      if (b) window.MUSIFY_API_BASE = b;
+    }
+  } catch (_) {
+    // ignore
+  }
+}
+
+initApiBaseFromEnvironment();
 
 const LIKES_STORAGE_KEY = "musify_liked_tracks_v1";
 const LOCAL_COMMENTS_KEY = "musify_local_comments_v1";
@@ -83,8 +134,18 @@ function getCurrentTgAuthor() {
 }
 
 function getApiBase() {
-  const b = (typeof window !== "undefined" && window.MUSIFY_API_BASE) || "";
-  return String(b).trim().replace(/\/$/, "");
+  return cleanApiBase(typeof window !== "undefined" ? window.MUSIFY_API_BASE : "");
+}
+
+function updateApiBannerVisibility() {
+  const banner = document.getElementById("apiConnectBanner");
+  const manual = document.getElementById("apiBaseManual");
+  if (manual && !manual.value && getApiBase()) {
+    manual.value = getApiBase();
+  }
+  if (banner) {
+    banner.style.display = getApiBase() ? "none" : "block";
+  }
 }
 
 async function fetchCommentsFromApi(trackId) {
@@ -579,11 +640,36 @@ function setup() {
   const q = document.getElementById("q");
   const tabSearch = document.getElementById("tabSearch");
   const tabProfile = document.getElementById("tabProfile");
+  const apiSave = document.getElementById("apiBaseSave");
+  const apiManual = document.getElementById("apiBaseManual");
   if (!form || !q) return;
 
   tabSearch?.addEventListener("click", () => showSection("search"));
   tabProfile?.addEventListener("click", () => showSection("profile"));
   setupCommentsModal();
+
+  apiSave?.addEventListener("click", () => {
+    const raw = (apiManual?.value || "").trim();
+    const b = cleanApiBase(raw);
+    if (!b || !b.startsWith("https://")) {
+      setStatus("Укажите корректный https:// URL сервера бота (без слэша в конце).");
+      return;
+    }
+    window.MUSIFY_API_BASE = b;
+    try {
+      localStorage.setItem(API_BASE_STORAGE_KEY, b);
+    } catch (_) {
+      // ignore
+    }
+    setStatus("Сервер подключён. Обновляю счётчики…");
+    updateApiBannerVisibility();
+    const ids = [...document.querySelectorAll("[data-like-count-for]")]
+      .map((el) => Number(el.getAttribute("data-like-count-for")))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    void refreshLikeBadges(ids);
+  });
+
+  updateApiBannerVisibility();
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
