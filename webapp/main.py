@@ -59,7 +59,7 @@ if WEBAPP_URL:
         WEBAPP_URL = None
 
 # Публичный HTTPS URL до HTTP-API бота (тот же процесс, что polling), без слэша в конце.
-# Mini App откроется с ?api=... — фронт подставит MUSIFY_API_BASE.
+# Mini App: ?api=... и дублируем в #api=... — часть клиентов Telegram обрезает query.
 BOT_PUBLIC_API_URL = (os.getenv("BOT_PUBLIC_API_URL") or "").strip().rstrip("/")
 
 
@@ -68,8 +68,20 @@ def _webapp_url_for_open() -> Optional[str]:
         return None
     if not BOT_PUBLIC_API_URL:
         return WEBAPP_URL
-    sep = "&" if "?" in WEBAPP_URL else "?"
-    return f"{WEBAPP_URL}{sep}api={quote(BOT_PUBLIC_API_URL, safe='')}"
+    base = WEBAPP_URL.split("#", 1)[0]
+    sep = "&" if "?" in base else "?"
+    enc = quote(BOT_PUBLIC_API_URL, safe="")
+    return f"{base}{sep}api={enc}#api={enc}"
+
+
+def _sanitize_jsonp_callback(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    if len(name) > 64:
+        return None
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+        return None
+    return name
 
 
 def _validate_webapp_url(url: Optional[str]) -> bool:
@@ -295,6 +307,16 @@ class MiniAppAPIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _write_jsonp(self, callback: str, payload: Dict[str, Any]) -> None:
+        raw = json.dumps(payload, ensure_ascii=False)
+        body = f"{callback}({raw});\n".encode("utf-8")
+        self.send_response(200)
+        self._send_cors()
+        self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self._send_cors()
@@ -315,7 +337,16 @@ class MiniAppAPIHandler(BaseHTTPRequestHandler):
                 except ValueError:
                     continue
             counts = _like_counts_for_tracks(track_ids)
-            self._write_json(200, {"likes": {str(k): v for k, v in counts.items()}})
+            payload = {"likes": {str(k): v for k, v in counts.items()}}
+            cb_raw = (qs.get("callback") or [None])[0]
+            cb = _sanitize_jsonp_callback(cb_raw)
+            if cb_raw and not cb:
+                self._write_json(400, {"error": "bad callback"})
+                return
+            if cb:
+                self._write_jsonp(cb, payload)
+            else:
+                self._write_json(200, payload)
             return
 
         if path.startswith("/api/comments/"):
