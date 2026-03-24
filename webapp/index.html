@@ -146,6 +146,18 @@
       .comment-author { font-weight: bold; opacity: 0.95; }
       .comment-meta { font-size: 11px; opacity: 0.65; margin-top: 4px; }
       .comment-text { margin-top: 6px; line-height: 1.35; }
+      .api-banner {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(255, 80, 80, 0.07);
+      }
+      .api-banner code {
+        font-size: 11px;
+        opacity: 0.9;
+        word-break: break-all;
+      }
     </style>
   </head>
   <body>
@@ -157,6 +169,17 @@
       <div class="row" style="margin-top:10px;">
         <button type="button" id="tabSearch">Поиск</button>
         <button type="button" id="tabProfile">Профиль (лайки)</button>
+      </div>
+      <div id="apiConnectBanner" class="api-banner" style="display: none">
+        <div class="small" style="margin-bottom: 8px">
+          Нет связи с сервером бота — не видны <b>общие комментарии</b> и <b>счётчики лайков</b>. Укажите публичный
+          <code>https://</code> URL того же сервера, где запущен бот (порт API по умолчанию <code>8765</code>), или задайте переменную
+          <code>BOT_PUBLIC_API_URL</code> при запуске бота. Можно ввести URL ниже — сохранится на этом устройстве.
+        </div>
+        <div class="row" style="align-items: center">
+          <input type="url" id="apiBaseManual" placeholder="https://example.com" style="flex: 1; min-width: 0" />
+          <button type="button" id="apiBaseSave">Сохранить</button>
+        </div>
       </div>
       <form id="searchForm">
         <input id="q" placeholder="Поиск: исполнитель или трек" maxlength="120" />
