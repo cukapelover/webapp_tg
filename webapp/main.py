@@ -59,7 +59,7 @@ if WEBAPP_URL:
         WEBAPP_URL = None
 
 # Публичный HTTPS URL до HTTP-API бота (тот же процесс, что polling), без слэша в конце.
-# Важно: часть клиентов Telegram обрезает query (?api=...) у WebApp URL, поэтому добавляем ещё и #api=...
+# Mini App откроется с ?api=... — фронт подставит MUSIFY_API_BASE.
 BOT_PUBLIC_API_URL = (os.getenv("BOT_PUBLIC_API_URL") or "").strip().rstrip("/")
 
 
@@ -68,11 +68,8 @@ def _webapp_url_for_open() -> Optional[str]:
         return None
     if not BOT_PUBLIC_API_URL:
         return WEBAPP_URL
-    base = WEBAPP_URL.split("#", 1)[0]
-    sep = "&" if "?" in base else "?"
-    encoded = quote(BOT_PUBLIC_API_URL, safe="")
-    # query + hash: фронт прочитает что доступно
-    return f"{base}{sep}api={encoded}#api={encoded}"
+    sep = "&" if "?" in WEBAPP_URL else "?"
+    return f"{WEBAPP_URL}{sep}api={quote(BOT_PUBLIC_API_URL, safe='')}"
 
 
 def _validate_webapp_url(url: Optional[str]) -> bool:
@@ -283,7 +280,11 @@ class MiniAppAPIHandler(BaseHTTPRequestHandler):
     def _send_cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # Mini App шлёт ngrok-skip-browser-warning — без этого в списке preflight CORS падает.
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Accept, ngrok-skip-browser-warning, X-Requested-With",
+        )
 
     def _write_json(self, status: int, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -301,7 +302,7 @@ class MiniAppAPIHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        path = parsed.path
+        path = (parsed.path or "").rstrip("/") or "/"
 
         if path == "/api/likes":
             qs = parse_qs(parsed.query)
